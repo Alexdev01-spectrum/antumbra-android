@@ -34,7 +34,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var portName by mutableStateOf<String?>(null)
         private set
 
-    var connectionTypeLabel by mutableStateOf("—")
+    var connectionTypeLabel by mutableStateOf("\u2014")
+        private set
+
+    var hwCodeLabel by mutableStateOf("\u2014")
         private set
 
     var statusMessage by mutableStateOf("Waiting for device")
@@ -70,14 +73,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun requestOrConnect(device: UsbDevice) {
         if (usb.hasPermission(device)) connect(device)
         else {
-            statusMessage = "Requesting permission…"
+            statusMessage = "Requesting permission\u2026"
             usb.requestPermission(device)
         }
     }
 
     private fun connect(device: UsbDevice) {
         connState = ConnState.Connecting
-        statusMessage = "Opening…"
+        statusMessage = "Opening\u2026"
         log("Opening ${device.productName ?: device.deviceName}")
 
         val od = usb.openAndClaim(device)
@@ -97,14 +100,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             2 -> "DA"
             else -> "Unknown"
         }
-        connState = ConnState.Connected
-        statusMessage = "Connected · $connectionTypeLabel"
-        log("Connected: $portName ($connectionTypeLabel)", LogLine.Level.Success)
 
-        // probe
+        log("USB open: $portName ($connectionTypeLabel)")
+        statusMessage = "Handshake\u2026"
+
         val r = Native.probe(handle)
-        log(if (r == 0) "Probe OK" else "Probe returned $r",
-            if (r == 0) LogLine.Level.Success else LogLine.Level.Warn)
+        if (r == 0) {
+            val hw = Native.getHwCode(handle)
+            hwCodeLabel = if (hw != 0) String.format("0x%04X", hw) else "\u2014"
+            connState = ConnState.Connected
+            statusMessage = "Connected \u00b7 $connectionTypeLabel"
+            log("Device::init OK  hw=$hwCodeLabel", LogLine.Level.Success)
+        } else {
+            connState = ConnState.Error
+            statusMessage = "Handshake failed ($r)"
+            log("Device::init failed code=$r", LogLine.Level.Error)
+        }
     }
 
     fun disconnect() {
@@ -116,7 +127,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         opened = null
         handle = -1
         portName = null
-        connectionTypeLabel = "—"
+        connectionTypeLabel = "\u2014"
+        hwCodeLabel = "\u2014"
         connState = ConnState.Disconnected
         statusMessage = "Disconnected"
         refreshDevices()

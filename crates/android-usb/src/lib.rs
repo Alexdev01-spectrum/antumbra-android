@@ -1,37 +1,35 @@
-//! Android USB Host backend shaped exactly like penumbra-mtk's LibUsbMTKPort.
-//! Implements the same surface the MtkPort trait expects so it can be dropped
-//! in once upstream is linked as a path dependency.
+//! Android USB Host backend implementing penumbra_mtk::port::MtkPort.
+//!
+//! JNIEnv is obtained per-call via a process-global JavaVM set from JNI_OnLoad / Native.init.
 
 use jni::objects::{GlobalRef, JObject, JValue};
-use jni::JNIEnv;
+use jni::{JNIEnv, JavaVM};
+use once_cell::sync::OnceCell;
+use penumbra_mtk::error::{ConnectionError, Error as PenumbraError, Result as PenumbraResult};
+use penumbra_mtk::port::{ConnectionType, MtkPort};
 use std::collections::VecDeque;
 use std::time::Duration;
-use thiserror::Error;
 
-#[derive(Debug, Error)]
-pub enum AndroidUsbError {
-    #[error("JNI: {0}")]
-    Jni(String),
-    #[error("transfer: {0}")]
-    Transfer(String),
-    #[error("not open")]
-    NotOpen,
-    #[error("timeout")]
-    Timeout,
-    #[error("re-enumeration not supported on Android USB Host")]
-    ReenumerateUnsupported,
+static JVM: OnceCell<JavaVM> = OnceCell::new();
+
+/// Called once from JNI init with the JavaVM pointer.
+pub fn set_vm(vm: JavaVM) {
+    let _ = JVM.set(vm);
 }
 
-pub type Result<T> = std::result::Result<T, AndroidUsbError>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionType {
-    Brom,
-    Preloader,
-    Da,
+fn with_env<F, R>(f: F) -> PenumbraResult<R>
+where
+    F: FnOnce(&mut JNIEnv) -> PenumbraResult<R>,
+{
+    let vm = JVM.get().ok_or_else(|| {
+        PenumbraError::Connection(ConnectionError::OpenFailed("JavaVM not set".into()))
+    })?;
+    let mut env = vm
+        .attach_current_thread()
+        .map_err(|e| PenumbraError::Connection(ConnectionError::OpenFailed(format!("attach: {e}"))))?;
+    f(&mut env)
 }
 
-/// Full MtkPort-compatible Android USB port.
 pub struct AndroidUsbMTKPort {
     connection: GlobalRef,
     ep_in: GlobalRef,
@@ -53,16 +51,16 @@ impl AndroidUsbMTKPort {
         conn_type: ConnectionType,
         vid: u16,
         pid: u16,
-    ) -> Result<Self> {
-        let connection = env
-            .new_global_ref(connection)
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
-        let ep_in = env
-            .new_global_ref(ep_in)
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
-        let ep_out = env
-            .new_global_ref(ep_out)
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
+    ) -> PenumbraResult<Self> {
+        let connection = env.new_global_ref(connection).map_err(|e| {
+            PenumbraError::Connection(ConnectionError::OpenFailed(format!("global ref: {e}")))
+        })?;
+        let ep_in = env.new_global_ref(ep_in).map_err(|e| {
+            PenumbraError::Connection(ConnectionError::OpenFailed(format!("global ref: {e}")))
+        })?;
+        let ep_out = env.new_global_ref(ep_out).map_err(|e| {
+            PenumbraError::Connection(ConnectionError::OpenFailed(format!("global ref: {e}")))
+        })?;
 
         Ok(Self {
             connection,
@@ -77,16 +75,16 @@ impl AndroidUsbMTKPort {
         })
     }
 
-    fn bulk(
+    fn bulk_inner(
         &self,
         env: &mut JNIEnv,
         endpoint: &GlobalRef,
         buf: &mut [u8],
         length: i32,
-    ) -> Result<i32> {
-        let java_buf = env
-            .byte_array_from_slice(&buf[..length as usize])
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
+    ) -> PenumbraResult<i32> {
+        let java_buf = env.byte_array_from_slice(&buf[..length as usize]).map_err(|e| {
+            PenumbraError::Io(std::io::Error::other(format!("byte array: {e}")))
+        })?;
 
         let result = env
             .call_method(
@@ -100,213 +98,218 @@ impl AndroidUsbMTKPort {
                     JValue::Int(self.timeout.as_millis() as i32),
                 ],
             )
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?
+            .map_err(|e| PenumbraError::Io(std::io::Error::other(format!("bulk: {e}"))))?
             .i()
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
+            .map_err(|e| PenumbraError::Io(std::io::Error::other(format!("bulk i: {e}"))))?;
 
         if result < 0 {
-            return Err(AndroidUsbError::Transfer(format!("bulk {result}")));
+            return Err(PenumbraError::Timeout);
         }
 
         if result > 0 {
-            let bytes = env
-                .convert_byte_array(&java_buf)
-                .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
+            let bytes = env.convert_byte_array(&java_buf).map_err(|e| {
+                PenumbraError::Io(std::io::Error::other(format!("convert: {e}")))
+            })?;
             let n = result as usize;
             buf[..n].copy_from_slice(&bytes[..n]);
         }
         Ok(result)
     }
+}
 
-    // --- MtkPort surface ---
-
-    pub fn open(&mut self) -> Result<()> {
+impl MtkPort for AndroidUsbMTKPort {
+    fn open(&mut self) -> PenumbraResult<()> {
         self.is_open = true;
         Ok(())
     }
 
-    pub fn close(&mut self) -> Result<()> {
+    fn close(&mut self) -> PenumbraResult<()> {
         self.is_open = false;
         Ok(())
     }
 
-    pub fn reenumerate(&mut self, _vid: u16, _pid: u16) -> Result<()> {
-        Err(AndroidUsbError::ReenumerateUnsupported)
+    fn reenumerate(&mut self, _vid: u16, _pid: u16) -> PenumbraResult<()> {
+        Err(PenumbraError::Connection(ConnectionError::OpenFailed(
+            "reenumerate not supported on Android USB Host".into(),
+        )))
     }
 
-    pub fn read_exact(&mut self, env: &mut JNIEnv, buf: &mut [u8]) -> Result<usize> {
+    fn read_exact(&mut self, buf: &mut [u8]) -> PenumbraResult<usize> {
         if !self.is_open {
-            return Err(AndroidUsbError::NotOpen);
-        }
-        let mut total = 0;
-
-        if !self.read_buf.is_empty() {
-            let take = buf.len().min(self.read_buf.len());
-            for i in 0..take {
-                buf[i] = self.read_buf.pop_front().unwrap();
-            }
-            total += take;
+            return Err(PenumbraError::Connection(ConnectionError::OpenFailed(
+                "not open".into(),
+            )));
         }
 
-        while total < buf.len() {
-            let needed = buf.len() - total;
-            let chunk = needed.min(self.temp_buf.len());
-            match self.bulk(env, &self.ep_in, &mut self.temp_buf[..chunk], chunk as i32) {
-                Ok(0) => continue,
-                Ok(n) => {
-                    let n = n as usize;
-                    let copy = n.min(needed);
-                    buf[total..total + copy].copy_from_slice(&self.temp_buf[..copy]);
-                    total += copy;
-                    if copy < n {
-                        self.read_buf.extend(&self.temp_buf[copy..n]);
-                    }
-                }
-                Err(AndroidUsbError::Transfer(_)) if total > 0 => {
-                    // partial — push back and surface timeout-like
-                    for b in buf[..total].iter().rev() {
-                        self.read_buf.push_front(*b);
-                    }
-                    return Err(AndroidUsbError::Timeout);
-                }
-                Err(e) => return Err(e),
+        // We need &mut self for read_buf + temp_buf, and env from attach.
+        // Split: copy state we need, do I/O, then merge.
+        with_env(|env| {
+            let mut total = 0usize;
+
+            // drain readahead first
+            while total < buf.len() && !self.read_buf.is_empty() {
+                buf[total] = self.read_buf.pop_front().unwrap();
+                total += 1;
             }
-        }
-        Ok(total)
+
+            while total < buf.len() {
+                let needed = buf.len() - total;
+                let chunk = needed.min(self.temp_buf.len());
+                // temporarily take endpoint ref
+                let n = self.bulk_inner(env, &self.ep_in, &mut self.temp_buf[..chunk], chunk as i32)?;
+                if n == 0 {
+                    continue;
+                }
+                let n = n as usize;
+                let copy = n.min(needed);
+                buf[total..total + copy].copy_from_slice(&self.temp_buf[..copy]);
+                total += copy;
+                if copy < n {
+                    self.read_buf.extend(&self.temp_buf[copy..n]);
+                }
+            }
+            Ok(total)
+        })
     }
 
-    pub fn write_all(&mut self, env: &mut JNIEnv, buf: &[u8]) -> Result<()> {
+    fn write_all(&mut self, buf: &[u8]) -> PenumbraResult<()> {
         if !self.is_open {
-            return Err(AndroidUsbError::NotOpen);
+            return Err(PenumbraError::Connection(ConnectionError::OpenFailed(
+                "not open".into(),
+            )));
         }
-        let mut written = 0;
-        let mut tmp = buf.to_vec();
-        while written < buf.len() {
-            let n = self.bulk(
-                env,
-                &self.ep_out,
-                &mut tmp[written..],
-                (buf.len() - written) as i32,
-            )?;
-            if n <= 0 {
-                return Err(AndroidUsbError::Timeout);
+        with_env(|env| {
+            let mut written = 0;
+            let mut tmp = buf.to_vec();
+            while written < buf.len() {
+                let n = self.bulk_inner(
+                    env,
+                    &self.ep_out,
+                    &mut tmp[written..],
+                    (buf.len() - written) as i32,
+                )?;
+                if n <= 0 {
+                    return Err(PenumbraError::Timeout);
+                }
+                written += n as usize;
             }
-            written += n as usize;
-        }
+            Ok(())
+        })
+    }
+
+    fn flush(&mut self) -> PenumbraResult<()> {
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    pub fn get_baudrate(&self) -> u32 {
+    fn get_baudrate(&self) -> u32 {
         0
     }
 
-    pub fn get_port_name(&self) -> String {
+    fn get_port_name(&self) -> String {
         self.port_name.clone()
     }
 
-    pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {
+    fn set_timeout(&mut self, timeout: Duration) -> PenumbraResult<()> {
         self.timeout = timeout;
         Ok(())
     }
 
-    pub fn get_timeout(&self) -> Duration {
+    fn get_timeout(&self) -> Duration {
         self.timeout
     }
 
-    pub fn connection_type(&self) -> ConnectionType {
+    fn connection_type(&self) -> ConnectionType {
         self.connection_type
     }
 
-    pub fn set_connection_type(&mut self, t: ConnectionType) -> Result<()> {
+    fn set_connection_type(&mut self, t: ConnectionType) -> PenumbraResult<()> {
         self.connection_type = t;
         Ok(())
     }
 
-    pub fn ctrl_out(
+    fn ctrl_out(
         &mut self,
-        env: &mut JNIEnv,
         request_type: u8,
         request: u8,
         value: u16,
         index: u16,
         data: &[u8],
-    ) -> Result<()> {
-        let java_buf = env
-            .byte_array_from_slice(data)
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
+    ) -> PenumbraResult<()> {
+        with_env(|env| {
+            let java_buf = env.byte_array_from_slice(data).map_err(|e| {
+                PenumbraError::Io(std::io::Error::other(format!("ctrl_out buf: {e}")))
+            })?;
+            let result = env
+                .call_method(
+                    &self.connection,
+                    "controlTransfer",
+                    "(IIII[BII)I",
+                    &[
+                        JValue::Int(request_type as i32),
+                        JValue::Int(request as i32),
+                        JValue::Int(value as i32),
+                        JValue::Int(index as i32),
+                        JValue::Object(&java_buf),
+                        JValue::Int(data.len() as i32),
+                        JValue::Int(self.timeout.as_millis() as i32),
+                    ],
+                )
+                .map_err(|e| {
+                    PenumbraError::Connection(ConnectionError::CtrlTransferOutFailed)
+                })?
+                .i()
+                .map_err(|_| PenumbraError::Connection(ConnectionError::CtrlTransferOutFailed))?;
 
-        let result = env
-            .call_method(
-                &self.connection,
-                "controlTransfer",
-                "(IIII[BII)I",
-                &[
-                    JValue::Int(request_type as i32),
-                    JValue::Int(request as i32),
-                    JValue::Int(value as i32),
-                    JValue::Int(index as i32),
-                    JValue::Object(&java_buf),
-                    JValue::Int(data.len() as i32),
-                    JValue::Int(self.timeout.as_millis() as i32),
-                ],
-            )
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?
-            .i()
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
-
-        if result < 0 {
-            return Err(AndroidUsbError::Transfer(format!("ctrl_out {result}")));
-        }
-        Ok(())
+            if result < 0 {
+                return Err(PenumbraError::Connection(ConnectionError::CtrlTransferOutFailed));
+            }
+            Ok(())
+        })
     }
 
-    pub fn ctrl_in(
+    fn ctrl_in(
         &mut self,
-        env: &mut JNIEnv,
         request_type: u8,
         request: u8,
         value: u16,
         index: u16,
         len: usize,
-    ) -> Result<Vec<u8>> {
-        let mut buf = vec![0u8; len];
-        let java_buf = env
-            .byte_array_from_slice(&buf)
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
+    ) -> PenumbraResult<Vec<u8>> {
+        with_env(|env| {
+            let mut buf = vec![0u8; len];
+            let java_buf = env.byte_array_from_slice(&buf).map_err(|e| {
+                PenumbraError::Io(std::io::Error::other(format!("ctrl_in buf: {e}")))
+            })?;
+            let result = env
+                .call_method(
+                    &self.connection,
+                    "controlTransfer",
+                    "(IIII[BII)I",
+                    &[
+                        JValue::Int(request_type as i32),
+                        JValue::Int(request as i32),
+                        JValue::Int(value as i32),
+                        JValue::Int(index as i32),
+                        JValue::Object(&java_buf),
+                        JValue::Int(len as i32),
+                        JValue::Int(self.timeout.as_millis() as i32),
+                    ],
+                )
+                .map_err(|_| PenumbraError::Connection(ConnectionError::CtrlTransferInFailed))?
+                .i()
+                .map_err(|_| PenumbraError::Connection(ConnectionError::CtrlTransferInFailed))?;
 
-        let result = env
-            .call_method(
-                &self.connection,
-                "controlTransfer",
-                "(IIII[BII)I",
-                &[
-                    JValue::Int(request_type as i32),
-                    JValue::Int(request as i32),
-                    JValue::Int(value as i32),
-                    JValue::Int(index as i32),
-                    JValue::Object(&java_buf),
-                    JValue::Int(len as i32),
-                    JValue::Int(self.timeout.as_millis() as i32),
-                ],
-            )
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?
-            .i()
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
+            if result < 0 {
+                return Err(PenumbraError::Connection(ConnectionError::CtrlTransferInFailed));
+            }
 
-        if result < 0 {
-            return Err(AndroidUsbError::Transfer(format!("ctrl_in {result}")));
-        }
-
-        let bytes = env
-            .convert_byte_array(&java_buf)
-            .map_err(|e| AndroidUsbError::Jni(e.to_string()))?;
-        let n = result as usize;
-        buf[..n].copy_from_slice(&bytes[..n]);
-        buf.truncate(n);
-        Ok(buf)
+            let bytes = env.convert_byte_array(&java_buf).map_err(|e| {
+                PenumbraError::Io(std::io::Error::other(format!("ctrl_in convert: {e}")))
+            })?;
+            let n = result as usize;
+            buf[..n].copy_from_slice(&bytes[..n]);
+            buf.truncate(n);
+            Ok(buf)
+        })
     }
 }

@@ -12,7 +12,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.penumbra.antumbra.ui.AppViewModel
 import com.penumbra.antumbra.ui.ConnState
@@ -20,14 +19,18 @@ import com.penumbra.antumbra.ui.LogLine
 import com.penumbra.antumbra.ui.theme.AntumbraColors
 
 @Composable
-fun HomeScreen(vm: AppViewModel, onNavigateDevices: () -> Unit) {
+fun HomeScreen(
+    vm: AppViewModel,
+    onNavigateDevices: () -> Unit,
+    onNavigateFlash: () -> Unit,
+    onNavigateUnlock: () -> Unit,
+) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(AntumbraColors.void)
             .padding(20.dp)
     ) {
-        // header
         Text(
             "ANTUMBRA",
             style = MaterialTheme.typography.displayLarge,
@@ -40,13 +43,9 @@ fun HomeScreen(vm: AppViewModel, onNavigateDevices: () -> Unit) {
         )
 
         Spacer(Modifier.height(28.dp))
-
-        // status card
         StatusCard(vm)
-
         Spacer(Modifier.height(20.dp))
 
-        // quick actions
         Text(
             "ACTIONS",
             style = MaterialTheme.typography.labelLarge,
@@ -66,15 +65,24 @@ fun HomeScreen(vm: AppViewModel, onNavigateDevices: () -> Unit) {
                 accent = vm.connState == ConnState.Connected
             )
         }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            ActionChip(
+                "Flash",
+                onNavigateFlash,
+                Modifier.weight(1f),
+                enabled = vm.connState == ConnState.Connected
+            )
+            ActionChip(
+                "Unlock",
+                onNavigateUnlock,
+                Modifier.weight(1f),
+                enabled = vm.connState == ConnState.Connected
+            )
+        }
 
         Spacer(Modifier.height(24.dp))
-
-        // live log
-        Text(
-            "LOG",
-            style = MaterialTheme.typography.labelLarge,
-            color = AntumbraColors.textSecondary
-        )
+        Text("LOG", style = MaterialTheme.typography.labelLarge, color = AntumbraColors.textSecondary)
         Spacer(Modifier.height(8.dp))
 
         LazyColumn(
@@ -84,11 +92,16 @@ fun HomeScreen(vm: AppViewModel, onNavigateDevices: () -> Unit) {
                 .clip(RoundedCornerShape(12.dp))
                 .background(AntumbraColors.surface)
                 .border(1.dp, AntumbraColors.outline, RoundedCornerShape(12.dp))
-                .padding(12.dp),
-            reverseLayout = false
+                .padding(12.dp)
         ) {
             items(vm.logs) { line ->
-                LogRow(line)
+                val color = when (line.level) {
+                    LogLine.Level.Success -> AntumbraColors.success
+                    LogLine.Level.Warn -> AntumbraColors.amber
+                    LogLine.Level.Error -> AntumbraColors.danger
+                    LogLine.Level.Info -> AntumbraColors.textSecondary
+                }
+                Text(line.text, style = MaterialTheme.typography.labelSmall, color = color)
                 Spacer(Modifier.height(4.dp))
             }
         }
@@ -113,26 +126,17 @@ private fun StatusCard(vm: AppViewModel) {
             .padding(18.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                modifier = Modifier
-                    .size(10.dp)
-                    .clip(CircleShape)
-                    .background(dotColor)
-            )
+            Box(Modifier.size(10.dp).clip(CircleShape).background(dotColor))
             Spacer(Modifier.width(10.dp))
-            Text(
-                vm.statusMessage,
-                style = MaterialTheme.typography.titleMedium,
-                color = AntumbraColors.textPrimary
-            )
+            Text(vm.statusMessage, style = MaterialTheme.typography.titleMedium, color = AntumbraColors.textPrimary)
         }
-
-        if (vm.connState == ConnState.Connected) {
+        if (vm.connState == ConnState.Connected || vm.connState == ConnState.Error) {
             Spacer(Modifier.height(12.dp))
-            Divider(color = AntumbraColors.outline)
+            HorizontalDivider(color = AntumbraColors.outline)
             Spacer(Modifier.height(12.dp))
-            MetaRow("Port", vm.portName ?: "—")
+            MetaRow("Port", vm.portName ?: "\u2014")
             MetaRow("Mode", vm.connectionTypeLabel)
+            MetaRow("HW code", vm.hwCodeLabel)
             MetaRow("Handle", vm.handle.toString())
         }
     }
@@ -141,9 +145,7 @@ private fun StatusCard(vm: AppViewModel) {
 @Composable
 private fun MetaRow(label: String, value: String) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 3.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(label, style = MaterialTheme.typography.bodyMedium, color = AntumbraColors.textSecondary)
@@ -156,32 +158,21 @@ private fun ActionChip(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    accent: Boolean = false
+    accent: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Button(
         onClick = onClick,
+        enabled = enabled,
         modifier = modifier.height(48.dp),
         shape = RoundedCornerShape(12.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = if (accent) AntumbraColors.amber else AntumbraColors.surfaceHigh,
-            contentColor = if (accent) AntumbraColors.void else AntumbraColors.textPrimary
+            contentColor = if (accent) AntumbraColors.void else AntumbraColors.textPrimary,
+            disabledContainerColor = AntumbraColors.surface,
+            disabledContentColor = AntumbraColors.textSecondary
         )
     ) {
         Text(label, style = MaterialTheme.typography.labelLarge)
     }
-}
-
-@Composable
-private fun LogRow(line: LogLine) {
-    val color = when (line.level) {
-        LogLine.Level.Success -> AntumbraColors.success
-        LogLine.Level.Warn -> AntumbraColors.amber
-        LogLine.Level.Error -> AntumbraColors.danger
-        LogLine.Level.Info -> AntumbraColors.textSecondary
-    }
-    Text(
-        line.text,
-        style = MaterialTheme.typography.labelSmall,
-        color = color
-    )
 }

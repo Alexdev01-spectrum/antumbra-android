@@ -10,6 +10,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 android-usb = { path = "../android-usb" }
+penumbra-mtk = { git = "https://github.com/shomykohai/penumbra.git", package = "penumbra-mtk", default-features = false, features = ["exploits", "localslakeyring"] }
 jni = "0.21"
 log = "0.4"
 android_logger = "0.14"

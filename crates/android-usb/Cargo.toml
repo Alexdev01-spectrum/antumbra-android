@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Upstream core — no host USB backends; we supply AndroidUsbMTKPort as MtkPort
+penumbra-mtk = { git = "https://github.com/shomykohai/penumbra.git", package = "penumbra-mtk", default-features = false, features = ["exploits", "localslakeyring"] }
 thiserror = "2"
 log = "0.4"
 jni = "0.21"
+once_cell = "1"

@@ -9,12 +9,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import com.penumbra.antumbra.ui.AppViewModel
-import com.penumbra.antumbra.ui.screens.DevicesScreen
-import com.penumbra.antumbra.ui.screens.HomeScreen
+import com.penumbra.antumbra.ui.screens.*
 import com.penumbra.antumbra.ui.theme.AntumbraColors
 import com.penumbra.antumbra.ui.theme.AntumbraTheme
 
-enum class Screen { Home, Devices }
+enum class Screen { Home, Devices, Flash, Unlock }
 
 class MainActivity : ComponentActivity() {
 
@@ -26,21 +25,19 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             AntumbraTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = AntumbraColors.void
-                ) {
+                Surface(modifier = Modifier.fillMaxSize(), color = AntumbraColors.void) {
                     var screen by remember { mutableStateOf(Screen.Home) }
 
                     when (screen) {
                         Screen.Home -> HomeScreen(
                             vm = vm,
-                            onNavigateDevices = { screen = Screen.Devices }
+                            onNavigateDevices = { screen = Screen.Devices },
+                            onNavigateFlash = { screen = Screen.Flash },
+                            onNavigateUnlock = { screen = Screen.Unlock },
                         )
-                        Screen.Devices -> DevicesScreen(
-                            vm = vm,
-                            onBack = { screen = Screen.Home }
-                        )
+                        Screen.Devices -> DevicesScreen(vm = vm, onBack = { screen = Screen.Home })
+                        Screen.Flash -> FlashScreen(vm = vm, onBack = { screen = Screen.Home })
+                        Screen.Unlock -> UnlockScreen(vm = vm, onBack = { screen = Screen.Home })
                     }
                 }
             }

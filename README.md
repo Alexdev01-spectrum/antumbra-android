@@ -1,51 +1,57 @@
 # Antumbra Android
 
-1:1 native Android port of [Penumbra / Antumbra](https://github.com/shomykohai/penumbra) — MediaTek flash, unlock, readback tool.
+Native Android port of [Penumbra / Antumbra](https://github.com/shomykohai/penumbra).
 
-Dark, minimal, high-contrast UI. USB Host transport. Full feature surface once upstream core is linked.
+- **Transport:** `AndroidUsbMTKPort` implements `penumbra_mtk::port::MtkPort` via USB Host + JNI
+- **Core:** `penumbra-mtk` from upstream git (exploits + localslakeyring, no host USB backends)
+- **UI:** dark void + amber, Home / Devices / Flash / Unlock
 
-## Screens
-
-- **Home** — device status, connection state, quick actions
-- **Devices** — live MTK device list with VID/PID, permission + claim
-- **Flash** — scatter / image picker, partition select, progress
-- **Readback** — partition dump to SAF
-- **Unlock / Relock** 
-- **Advanced** — RPMB, memory R/W, logs
-
-## Build
+## Build (your machine — needs NDK)
 
 ```bash
-# 1. Upstream core (submodule)
-git submodule add https://github.com/shomykohai/penumbra.git upstream
-git submodule update --init
+git clone https://github.com/Alexdev01-spectrum/antumbra-android.git
+cd antumbra-android
 
-# 2. Rust targets + cargo-ndk
+# Nightly may be required (upstream uses edition 2024 / trait_alias)
+rustup default nightly
 rustup target add aarch64-linux-android armv7-linux-androideabi
 cargo install cargo-ndk
 
-# 3. Native libs
+# Point cargo-ndk at your NDK (example)
+export ANDROID_NDK_HOME=$HOME/Android/Sdk/ndk/26.1.10909125
+
 cargo ndk -t arm64-v8a -t armeabi-v7a \
   -o android/app/src/main/jniLibs \
   build --release -p antumbra-android
 
-# 4. APK
-cd android && ./gradlew :app:assembleRelease
+cd android
+# create local.properties with sdk.dir=...
+./gradlew :app:assembleRelease
 ```
 
-NDK r26+, SDK 35, minSdk 26.
+APK: `android/app/build/outputs/apk/release/app-release-unsigned.apk`
 
-## Architecture
+Sign with your keystore before install.
 
-```
-Compose UI  →  ViewModel  →  Native.kt (JNI)
-                                    ↓
-                          libantumbra.so
-                    AndroidUsbMTKPort : MtkPort
-                                    ↓
-                         UsbDeviceConnection
+## What works in code now
+
+| Layer | Status |
+|-------|--------|
+| USB Host claim + bulk/ctrl | Implemented |
+| `MtkPort` on Android | Implemented (JavaVM attach) |
+| `DeviceBuilder` + `Device::init` | Wired in `Native.probe` |
+| Flash / unlock JNI | UI ready; DA upload + write next |
+| Aesthetic Compose UI | Done |
+
+## Note on submodule
+
+Upstream is pulled as a **Cargo git dependency**, not a git submodule. Same source, simpler for Android CI. If you prefer a submodule:
+
+```bash
+git submodule add https://github.com/shomykohai/penumbra.git upstream
+# then switch Cargo.toml path = "../../upstream/core"
 ```
 
 ## License
 
-AGPL-3.0-or-later (inherits upstream).
+AGPL-3.0-or-later

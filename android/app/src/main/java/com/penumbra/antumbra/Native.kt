@@ -26,5 +26,10 @@ object Native {
 
     external fun getConnectionType(handle: Long): Int
 
+    /** Real penumbra Device::init handshake. 0 = ok. */
     external fun probe(handle: Long): Int
+
+    external fun getHwCode(handle: Long): Int
+
+    external fun isInitialized(handle: Long): Int
 }
