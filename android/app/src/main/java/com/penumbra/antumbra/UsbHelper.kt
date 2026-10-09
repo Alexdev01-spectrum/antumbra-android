@@ -37,19 +37,38 @@ class UsbHelper(private val context: Context) {
         }
     }
 
+    /** Fired when a new USB device appears (for re-enum style flows). */
+    var onDeviceAttached: ((UsbDevice) -> Unit)? = null
     var onPermissionResult: ((UsbDevice, Boolean) -> Unit)? = null
 
+    private val attachReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            if (intent.action != UsbManager.ACTION_USB_DEVICE_ATTACHED) return
+            val device = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                intent.getParcelableExtra(UsbManager.EXTRA_DEVICE)
+            } ?: return
+            if (isMtk(device)) onDeviceAttached?.invoke(device)
+        }
+    }
+
     fun register() {
-        val filter = IntentFilter(actionUsbPermission)
+        val permFilter = IntentFilter(actionUsbPermission)
+        val attachFilter = IntentFilter(UsbManager.ACTION_USB_DEVICE_ATTACHED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(permissionReceiver, permFilter, Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(attachReceiver, attachFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            context.registerReceiver(permissionReceiver, filter)
+            context.registerReceiver(permissionReceiver, permFilter)
+            context.registerReceiver(attachReceiver, attachFilter)
         }
     }
 
     fun unregister() {
         try { context.unregisterReceiver(permissionReceiver) } catch (_: Exception) {}
+        try { context.unregisterReceiver(attachReceiver) } catch (_: Exception) {}
     }
 
     fun listMtkDevices(): List<UsbDevice> =
@@ -70,11 +89,13 @@ class UsbHelper(private val context: Context) {
             return null
         }
 
+        // Claim all interfaces that look usable (mirrors desktop 0..=1 claim)
         var epIn: android.hardware.usb.UsbEndpoint? = null
         var epOut: android.hardware.usb.UsbEndpoint? = null
 
         for (i in 0 until device.interfaceCount) {
             val intf = device.getInterface(i)
+            runCatching { conn.claimInterface(intf, true) }
             var foundIn: android.hardware.usb.UsbEndpoint? = null
             var foundOut: android.hardware.usb.UsbEndpoint? = null
             for (e in 0 until intf.endpointCount) {
@@ -83,10 +104,9 @@ class UsbHelper(private val context: Context) {
                 if (ep.direction == UsbConstants.USB_DIR_IN) foundIn = ep
                 if (ep.direction == UsbConstants.USB_DIR_OUT) foundOut = ep
             }
-            if (foundIn != null && foundOut != null && conn.claimInterface(intf, true)) {
+            if (foundIn != null && foundOut != null && epIn == null) {
                 epIn = foundIn
                 epOut = foundOut
-                break
             }
         }
 

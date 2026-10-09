@@ -10,7 +10,6 @@ object Native {
     }
 
     external fun init()
-
     external fun openDevice(
         connection: UsbDeviceConnection,
         epIn: UsbEndpoint,
@@ -19,17 +18,16 @@ object Native {
         vid: Int,
         pid: Int
     ): Long
-
     external fun closeDevice(handle: Long)
-
     external fun getPortName(handle: Long): String?
-
     external fun getConnectionType(handle: Long): Int
-
-    /** Real penumbra Device::init handshake. 0 = ok. */
     external fun probe(handle: Long): Int
-
     external fun getHwCode(handle: Long): Int
-
     external fun isInitialized(handle: Long): Int
+    external fun getProgress(handle: Long): Int
+    external fun getLastError(handle: Long): String?
+    external fun initWithDa(handle: Long, da: ByteArray): Int
+    external fun flash(handle: Long, da: ByteArray, image: ByteArray): Int
+    external fun unlock(handle: Long): Int
+    external fun relock(handle: Long): Int
 }

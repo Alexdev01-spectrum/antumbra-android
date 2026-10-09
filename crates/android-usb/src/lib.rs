@@ -1,6 +1,4 @@
 //! Android USB Host backend implementing penumbra_mtk::port::MtkPort.
-//!
-//! JNIEnv is obtained per-call via a process-global JavaVM set from JNI_OnLoad / Native.init.
 
 use jni::objects::{GlobalRef, JObject, JValue};
 use jni::{JNIEnv, JavaVM};
@@ -12,7 +10,6 @@ use std::time::Duration;
 
 static JVM: OnceCell<JavaVM> = OnceCell::new();
 
-/// Called once from JNI init with the JavaVM pointer.
 pub fn set_vm(vm: JavaVM) {
     let _ = JVM.set(vm);
 }
@@ -24,9 +21,9 @@ where
     let vm = JVM.get().ok_or_else(|| {
         PenumbraError::Connection(ConnectionError::OpenFailed("JavaVM not set".into()))
     })?;
-    let mut env = vm
-        .attach_current_thread()
-        .map_err(|e| PenumbraError::Connection(ConnectionError::OpenFailed(format!("attach: {e}"))))?;
+    let mut env = vm.attach_current_thread().map_err(|e| {
+        PenumbraError::Connection(ConnectionError::OpenFailed(format!("attach: {e}")))
+    })?;
     f(&mut env)
 }
 
@@ -53,13 +50,13 @@ impl AndroidUsbMTKPort {
         pid: u16,
     ) -> PenumbraResult<Self> {
         let connection = env.new_global_ref(connection).map_err(|e| {
-            PenumbraError::Connection(ConnectionError::OpenFailed(format!("global ref: {e}")))
+            PenumbraError::Connection(ConnectionError::OpenFailed(format!("ref: {e}")))
         })?;
         let ep_in = env.new_global_ref(ep_in).map_err(|e| {
-            PenumbraError::Connection(ConnectionError::OpenFailed(format!("global ref: {e}")))
+            PenumbraError::Connection(ConnectionError::OpenFailed(format!("ref: {e}")))
         })?;
         let ep_out = env.new_global_ref(ep_out).map_err(|e| {
-            PenumbraError::Connection(ConnectionError::OpenFailed(format!("global ref: {e}")))
+            PenumbraError::Connection(ConnectionError::OpenFailed(format!("ref: {e}")))
         })?;
 
         Ok(Self {
@@ -82,9 +79,9 @@ impl AndroidUsbMTKPort {
         buf: &mut [u8],
         length: i32,
     ) -> PenumbraResult<i32> {
-        let java_buf = env.byte_array_from_slice(&buf[..length as usize]).map_err(|e| {
-            PenumbraError::Io(std::io::Error::other(format!("byte array: {e}")))
-        })?;
+        let java_buf = env
+            .byte_array_from_slice(&buf[..length as usize])
+            .map_err(|e| PenumbraError::Io(std::io::Error::other(e.to_string())))?;
 
         let result = env
             .call_method(
@@ -95,31 +92,46 @@ impl AndroidUsbMTKPort {
                     JValue::Object(endpoint.as_obj()),
                     JValue::Object(&java_buf),
                     JValue::Int(length),
-                    JValue::Int(self.timeout.as_millis() as i32),
+                    JValue::Int(self.timeout.as_millis().min(i32::MAX as u128) as i32),
                 ],
             )
-            .map_err(|e| PenumbraError::Io(std::io::Error::other(format!("bulk: {e}"))))?
+            .map_err(|e| PenumbraError::Io(std::io::Error::other(e.to_string())))?
             .i()
-            .map_err(|e| PenumbraError::Io(std::io::Error::other(format!("bulk i: {e}"))))?;
+            .map_err(|e| PenumbraError::Io(std::io::Error::other(e.to_string())))?;
 
         if result < 0 {
             return Err(PenumbraError::Timeout);
         }
-
         if result > 0 {
-            let bytes = env.convert_byte_array(&java_buf).map_err(|e| {
-                PenumbraError::Io(std::io::Error::other(format!("convert: {e}")))
-            })?;
+            let bytes = env
+                .convert_byte_array(&java_buf)
+                .map_err(|e| PenumbraError::Io(std::io::Error::other(e.to_string())))?;
             let n = result as usize;
             buf[..n].copy_from_slice(&bytes[..n]);
         }
         Ok(result)
+    }
+
+    /// CDC line coding — mirrors libusb_backend setup_cdc for Preloader/DA.
+    pub fn setup_cdc(&mut self) -> PenumbraResult<()> {
+        const CDC_INTERFACE: u16 = 1;
+        const SET_LINE_CODING: u8 = 0x20;
+        const SET_CONTROL_LINE_STATE: u8 = 0x22;
+        const LINE_CODING: [u8; 7] = [0x00, 0x00, 0x0E, 0x00, 0x00, 0x00, 0x08];
+        // request_type: host-to-device | class | interface = 0x21
+        let request_type = 0x21u8;
+        self.ctrl_out(request_type, SET_LINE_CODING, 0, CDC_INTERFACE, &LINE_CODING)?;
+        self.ctrl_out(request_type, SET_CONTROL_LINE_STATE, 0x03, CDC_INTERFACE, &[])?;
+        Ok(())
     }
 }
 
 impl MtkPort for AndroidUsbMTKPort {
     fn open(&mut self) -> PenumbraResult<()> {
         self.is_open = true;
+        if self.connection_type != ConnectionType::Brom {
+            let _ = self.setup_cdc();
+        }
         Ok(())
     }
 
@@ -130,7 +142,7 @@ impl MtkPort for AndroidUsbMTKPort {
 
     fn reenumerate(&mut self, _vid: u16, _pid: u16) -> PenumbraResult<()> {
         Err(PenumbraError::Connection(ConnectionError::OpenFailed(
-            "reenumerate not supported on Android USB Host".into(),
+            "reenumerate unsupported — unplug/replug or wait for new USB device".into(),
         )))
     }
 
@@ -140,23 +152,17 @@ impl MtkPort for AndroidUsbMTKPort {
                 "not open".into(),
             )));
         }
-
-        // We need &mut self for read_buf + temp_buf, and env from attach.
-        // Split: copy state we need, do I/O, then merge.
         with_env(|env| {
             let mut total = 0usize;
-
-            // drain readahead first
             while total < buf.len() && !self.read_buf.is_empty() {
                 buf[total] = self.read_buf.pop_front().unwrap();
                 total += 1;
             }
-
             while total < buf.len() {
                 let needed = buf.len() - total;
                 let chunk = needed.min(self.temp_buf.len());
-                // temporarily take endpoint ref
-                let n = self.bulk_inner(env, &self.ep_in, &mut self.temp_buf[..chunk], chunk as i32)?;
+                let n =
+                    self.bulk_inner(env, &self.ep_in, &mut self.temp_buf[..chunk], chunk as i32)?;
                 if n == 0 {
                     continue;
                 }
@@ -236,9 +242,9 @@ impl MtkPort for AndroidUsbMTKPort {
         data: &[u8],
     ) -> PenumbraResult<()> {
         with_env(|env| {
-            let java_buf = env.byte_array_from_slice(data).map_err(|e| {
-                PenumbraError::Io(std::io::Error::other(format!("ctrl_out buf: {e}")))
-            })?;
+            let java_buf = env
+                .byte_array_from_slice(data)
+                .map_err(|e| PenumbraError::Io(std::io::Error::other(e.to_string())))?;
             let result = env
                 .call_method(
                     &self.connection,
@@ -251,15 +257,12 @@ impl MtkPort for AndroidUsbMTKPort {
                         JValue::Int(index as i32),
                         JValue::Object(&java_buf),
                         JValue::Int(data.len() as i32),
-                        JValue::Int(self.timeout.as_millis() as i32),
+                        JValue::Int(self.timeout.as_millis().min(i32::MAX as u128) as i32),
                     ],
                 )
-                .map_err(|e| {
-                    PenumbraError::Connection(ConnectionError::CtrlTransferOutFailed)
-                })?
+                .map_err(|_| PenumbraError::Connection(ConnectionError::CtrlTransferOutFailed))?
                 .i()
                 .map_err(|_| PenumbraError::Connection(ConnectionError::CtrlTransferOutFailed))?;
-
             if result < 0 {
                 return Err(PenumbraError::Connection(ConnectionError::CtrlTransferOutFailed));
             }
@@ -277,9 +280,9 @@ impl MtkPort for AndroidUsbMTKPort {
     ) -> PenumbraResult<Vec<u8>> {
         with_env(|env| {
             let mut buf = vec![0u8; len];
-            let java_buf = env.byte_array_from_slice(&buf).map_err(|e| {
-                PenumbraError::Io(std::io::Error::other(format!("ctrl_in buf: {e}")))
-            })?;
+            let java_buf = env
+                .byte_array_from_slice(&buf)
+                .map_err(|e| PenumbraError::Io(std::io::Error::other(e.to_string())))?;
             let result = env
                 .call_method(
                     &self.connection,
@@ -292,20 +295,18 @@ impl MtkPort for AndroidUsbMTKPort {
                         JValue::Int(index as i32),
                         JValue::Object(&java_buf),
                         JValue::Int(len as i32),
-                        JValue::Int(self.timeout.as_millis() as i32),
+                        JValue::Int(self.timeout.as_millis().min(i32::MAX as u128) as i32),
                     ],
                 )
                 .map_err(|_| PenumbraError::Connection(ConnectionError::CtrlTransferInFailed))?
                 .i()
                 .map_err(|_| PenumbraError::Connection(ConnectionError::CtrlTransferInFailed))?;
-
             if result < 0 {
                 return Err(PenumbraError::Connection(ConnectionError::CtrlTransferInFailed));
             }
-
-            let bytes = env.convert_byte_array(&java_buf).map_err(|e| {
-                PenumbraError::Io(std::io::Error::other(format!("ctrl_in convert: {e}")))
-            })?;
+            let bytes = env
+                .convert_byte_array(&java_buf)
+                .map_err(|e| PenumbraError::Io(std::io::Error::other(e.to_string())))?;
             let n = result as usize;
             buf[..n].copy_from_slice(&bytes[..n]);
             buf.truncate(n);

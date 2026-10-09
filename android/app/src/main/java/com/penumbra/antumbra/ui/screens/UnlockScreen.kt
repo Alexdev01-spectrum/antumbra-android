@@ -27,7 +27,7 @@ fun UnlockScreen(vm: AppViewModel, onBack: () -> Unit) {
         Spacer(Modifier.height(24.dp))
 
         Text(
-            "Bootloader unlock / relock uses upstream exploit paths (Carbonara, HeapB8, linecode) after DA is up. Available on vulnerable devices only.",
+            "Uses upstream exploit paths after a live DA session. Vulnerable devices only.",
             style = MaterialTheme.typography.bodyLarge,
             color = AntumbraColors.textSecondary
         )
@@ -35,7 +35,7 @@ fun UnlockScreen(vm: AppViewModel, onBack: () -> Unit) {
         Spacer(Modifier.height(28.dp))
 
         Button(
-            onClick = { vm.log("Unlock: wire Device unlock API after DA session is stable") },
+            onClick = { vm.startUnlock() },
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
@@ -47,7 +47,7 @@ fun UnlockScreen(vm: AppViewModel, onBack: () -> Unit) {
         Spacer(Modifier.height(12.dp))
 
         Button(
-            onClick = { vm.log("Relock requested") },
+            onClick = { vm.startRelock() },
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(

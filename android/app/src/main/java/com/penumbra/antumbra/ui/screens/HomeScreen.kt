@@ -31,26 +31,25 @@ fun HomeScreen(
             .background(AntumbraColors.void)
             .padding(20.dp)
     ) {
-        Text(
-            "ANTUMBRA",
-            style = MaterialTheme.typography.displayLarge,
-            color = AntumbraColors.textPrimary
-        )
-        Text(
-            "MediaTek flash tool",
-            style = MaterialTheme.typography.bodyMedium,
-            color = AntumbraColors.textSecondary
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text("ANTUMBRA", style = MaterialTheme.typography.displayLarge, color = AntumbraColors.textPrimary)
+                Text("MediaTek flash tool", style = MaterialTheme.typography.bodyMedium, color = AntumbraColors.textSecondary)
+            }
+            TextButton(onClick = { vm.exportLog() }) {
+                Text("Export log", color = AntumbraColors.amber)
+            }
+        }
 
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(24.dp))
         StatusCard(vm)
         Spacer(Modifier.height(20.dp))
 
-        Text(
-            "ACTIONS",
-            style = MaterialTheme.typography.labelLarge,
-            color = AntumbraColors.textSecondary
-        )
+        Text("ACTIONS", style = MaterialTheme.typography.labelLarge, color = AntumbraColors.textSecondary)
         Spacer(Modifier.height(10.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -67,18 +66,8 @@ fun HomeScreen(
         }
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ActionChip(
-                "Flash",
-                onNavigateFlash,
-                Modifier.weight(1f),
-                enabled = vm.connState == ConnState.Connected
-            )
-            ActionChip(
-                "Unlock",
-                onNavigateUnlock,
-                Modifier.weight(1f),
-                enabled = vm.connState == ConnState.Connected
-            )
+            ActionChip("Flash", onNavigateFlash, Modifier.weight(1f), enabled = vm.connState == ConnState.Connected)
+            ActionChip("Unlock", onNavigateUnlock, Modifier.weight(1f), enabled = vm.connState == ConnState.Connected)
         }
 
         Spacer(Modifier.height(24.dp))
@@ -116,7 +105,6 @@ private fun StatusCard(vm: AppViewModel) {
         ConnState.Error -> AntumbraColors.danger
         ConnState.Disconnected -> AntumbraColors.textSecondary
     }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -172,7 +160,5 @@ private fun ActionChip(
             disabledContainerColor = AntumbraColors.surface,
             disabledContentColor = AntumbraColors.textSecondary
         )
-    ) {
-        Text(label, style = MaterialTheme.typography.labelLarge)
-    }
+    ) { Text(label, style = MaterialTheme.typography.labelLarge) }
 }

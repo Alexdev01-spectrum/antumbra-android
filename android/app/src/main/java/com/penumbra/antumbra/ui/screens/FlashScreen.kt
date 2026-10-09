@@ -1,5 +1,8 @@
 package com.penumbra.antumbra.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -9,15 +12,36 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.penumbra.antumbra.ui.AppViewModel
 import com.penumbra.antumbra.ui.theme.AntumbraColors
 
 @Composable
 fun FlashScreen(vm: AppViewModel, onBack: () -> Unit) {
-    var daPicked by remember { mutableStateOf(false) }
-    var imagePicked by remember { mutableStateOf(false) }
-    var progress by remember { mutableFloatStateOf(0f) }
+    val context = LocalContext.current
+    var daName by remember { mutableStateOf<String?>(null) }
+    var imageName by remember { mutableStateOf<String?>(null) }
+
+    val daPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            vm.setDa(input.readBytes())
+            daName = uri.lastPathSegment
+        }
+    }
+
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        uri ?: return@rememberLauncherForActivityResult
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            vm.setImage(input.readBytes())
+            imageName = uri.lastPathSegment
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -32,52 +56,19 @@ fun FlashScreen(vm: AppViewModel, onBack: () -> Unit) {
 
         Spacer(Modifier.height(20.dp))
 
-        InfoCard(
-            "DA file",
-            if (daPicked) "Selected" else "Required for full flash",
-            if (daPicked) AntumbraColors.success else AntumbraColors.textSecondary
-        )
-        Spacer(Modifier.height(10.dp))
-        Button(
-            onClick = {
-                // SAF picker hooks here
-                daPicked = true
-                vm.log("DA selected (wire SAF in next pass)")
-            },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = AntumbraColors.surfaceHigh,
-                contentColor = AntumbraColors.textPrimary
-            )
-        ) { Text("Choose DA", style = MaterialTheme.typography.labelLarge) }
+        FileCard("DA file", daName ?: "Required") {
+            daPicker.launch(arrayOf("*/*"))
+        }
+        Spacer(Modifier.height(12.dp))
+        FileCard("Firmware / scatter", imageName ?: "Image or scatter") {
+            imagePicker.launch(arrayOf("*/*"))
+        }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(24.dp))
 
-        InfoCard(
-            "Firmware / scatter",
-            if (imagePicked) "Selected" else "Image or scatter file",
-            if (imagePicked) AntumbraColors.success else AntumbraColors.textSecondary
-        )
-        Spacer(Modifier.height(10.dp))
-        Button(
-            onClick = {
-                imagePicked = true
-                vm.log("Image selected (wire SAF in next pass)")
-            },
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = AntumbraColors.surfaceHigh,
-                contentColor = AntumbraColors.textPrimary
-            )
-        ) { Text("Choose image", style = MaterialTheme.typography.labelLarge) }
-
-        Spacer(Modifier.height(28.dp))
-
-        if (progress > 0f) {
+        if (vm.flashProgress > 0f) {
             LinearProgressIndicator(
-                progress = { progress },
+                progress = { vm.flashProgress },
                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
                 color = AntumbraColors.amber,
                 trackColor = AntumbraColors.outline
@@ -86,11 +77,8 @@ fun FlashScreen(vm: AppViewModel, onBack: () -> Unit) {
         }
 
         Button(
-            onClick = {
-                vm.log("Flash starts when DA upload + partition write JNI lands")
-                progress = 0.15f
-            },
-            enabled = daPicked && imagePicked,
+            onClick = { vm.startFlash() },
+            enabled = daName != null && imageName != null,
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(14.dp),
             colors = ButtonDefaults.buttonColors(
@@ -103,7 +91,7 @@ fun FlashScreen(vm: AppViewModel, onBack: () -> Unit) {
 
         Spacer(Modifier.height(16.dp))
         Text(
-            "Full flash path: Device::init \u2192 upload DA \u2192 switch to DA mode \u2192 write partitions. JNI for upload/write is next after probe is solid on device.",
+            "Files are read via SAF into memory, then passed to native flash(). Full DA upload + partition write completes when Device session path is finalized on-device.",
             style = MaterialTheme.typography.bodyMedium,
             color = AntumbraColors.textSecondary
         )
@@ -111,7 +99,7 @@ fun FlashScreen(vm: AppViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun InfoCard(title: String, subtitle: String, subtitleColor: androidx.compose.ui.graphics.Color) {
+private fun FileCard(title: String, subtitle: String, onPick: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -122,6 +110,15 @@ private fun InfoCard(title: String, subtitle: String, subtitleColor: androidx.co
     ) {
         Text(title, style = MaterialTheme.typography.titleMedium, color = AntumbraColors.textPrimary)
         Spacer(Modifier.height(4.dp))
-        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = subtitleColor)
+        Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = AntumbraColors.textSecondary)
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = onPick,
+            shape = RoundedCornerShape(10.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = AntumbraColors.surfaceHigh,
+                contentColor = AntumbraColors.textPrimary
+            )
+        ) { Text("Choose", style = MaterialTheme.typography.labelLarge) }
     }
 }

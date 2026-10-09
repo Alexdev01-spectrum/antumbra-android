@@ -12,11 +12,18 @@ android {
         applicationId = "com.penumbra.antumbra"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+    }
 
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+    signingConfigs {
+        // Create keystore locally, then:
+        // storeFile = file("keystore.jks")
+        // storePassword / keyAlias / keyPassword from env or local.properties
+        create("release") {
+            // left empty — assembleRelease still works unsigned;
+            // fill in for signed sideload builds
         }
     }
 
@@ -27,6 +34,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -34,14 +42,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
-    buildFeatures {
-        compose = true
-    }
+    kotlinOptions { jvmTarget = "17" }
+    buildFeatures { compose = true }
 }
 
 dependencies {
@@ -54,5 +56,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
