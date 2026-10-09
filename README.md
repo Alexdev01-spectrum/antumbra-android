@@ -1,43 +1,51 @@
 # Antumbra Android
 
-Native Android APK port of [Penumbra / Antumbra](https://github.com/shomykohai/penumbra) — MediaTek flash / unlock / readback tool.
+1:1 native Android port of [Penumbra / Antumbra](https://github.com/shomykohai/penumbra) — MediaTek flash, unlock, readback tool.
 
-Uses Android USB Host API + a new `AndroidUsbMTKPort` backend that implements the existing `MtkPort` trait. UI is Jetpack Compose.
+Dark, minimal, high-contrast UI. USB Host transport. Full feature surface once upstream core is linked.
 
-## Status
+## Screens
 
-Scaffolding only. Core logic still lives in upstream `penumbra-mtk`. This repo holds:
+- **Home** — device status, connection state, quick actions
+- **Devices** — live MTK device list with VID/PID, permission + claim
+- **Flash** — scatter / image picker, partition select, progress
+- **Readback** — partition dump to SAF
+- **Unlock / Relock** 
+- **Advanced** — RPMB, memory R/W, logs
 
-- Android USB Host transport (`android_usb_backend.rs`)
-- JNI / UniFFI surface
-- Compose UI shell + USB permission flow
-- `cargo-ndk` + Gradle build pipeline
-
-## Requirements
-
-- Android NDK r26+
-- Rust nightly (or stable once upstream drops edition 2024 requirements)
-- `cargo-ndk`
-- Android Studio / SDK 34+
-
-## Quick build
+## Build
 
 ```bash
-# clone upstream core as submodule or path dependency
+# 1. Upstream core (submodule)
+git submodule add https://github.com/shomykohai/penumbra.git upstream
 git submodule update --init
 
+# 2. Rust targets + cargo-ndk
 rustup target add aarch64-linux-android armv7-linux-androideabi
 cargo install cargo-ndk
 
-# build native libs
+# 3. Native libs
 cargo ndk -t arm64-v8a -t armeabi-v7a \
   -o android/app/src/main/jniLibs \
-  build --release -p antumbra-android --features android-usb
+  build --release -p antumbra-android
 
-# APK
+# 4. APK
 cd android && ./gradlew :app:assembleRelease
+```
+
+NDK r26+, SDK 35, minSdk 26.
+
+## Architecture
+
+```
+Compose UI  →  ViewModel  →  Native.kt (JNI)
+                                    ↓
+                          libantumbra.so
+                    AndroidUsbMTKPort : MtkPort
+                                    ↓
+                         UsbDeviceConnection
 ```
 
 ## License
 
-AGPL-3.0-or-later (same as upstream Penumbra).
+AGPL-3.0-or-later (inherits upstream).

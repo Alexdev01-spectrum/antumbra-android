@@ -1,77 +1,75 @@
-//! JNI surface for the Antumbra Android app.
-//!
-//! Package: com.penumbra.antumbra
-//! Class:   Native
+//! JNI surface — com.penumbra.antumbra.Native
 
 use android_usb::{AndroidUsbMTKPort, ConnectionType};
-use jni::objects::{JClass, JObject};
-use jni::sys::{jbyte, jint, jlong};
+use jni::objects::{JClass, JObject, JString};
+use jni::sys::{jint, jlong, jstring};
 use jni::JNIEnv;
 use std::sync::Mutex;
 
-// Simple handle table — production code should use a better map.
 static HANDLES: Mutex<Vec<Option<AndroidUsbMTKPort>>> = Mutex::new(Vec::new());
 
-fn insert_handle(port: AndroidUsbMTKPort) -> jlong {
-    let mut guards = HANDLES.lock().unwrap();
-    for (i, slot) in guards.iter_mut().enumerate() {
-        if slot.is_none() {
-            *slot = Some(port);
+fn insert(port: AndroidUsbMTKPort) -> jlong {
+    let mut g = HANDLES.lock().unwrap();
+    for (i, s) in g.iter_mut().enumerate() {
+        if s.is_none() {
+            *s = Some(port);
             return i as jlong;
         }
     }
-    guards.push(Some(port));
-    (guards.len() - 1) as jlong
+    g.push(Some(port));
+    (g.len() - 1) as jlong
 }
 
-fn with_handle<F, R>(handle: jlong, f: F) -> Option<R>
+fn with<F, R>(handle: jlong, f: F) -> Option<R>
 where
     F: FnOnce(&mut AndroidUsbMTKPort) -> R,
 {
-    let mut guards = HANDLES.lock().unwrap();
-    let idx = handle as usize;
-    guards.get_mut(idx).and_then(|s| s.as_mut()).map(f)
+    let mut g = HANDLES.lock().unwrap();
+    g.get_mut(handle as usize).and_then(|s| s.as_mut()).map(f)
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_penumbra_antumbra_Native_init(
-    _env: JNIEnv,
-    _class: JClass,
-) {
+pub extern "system" fn Java_com_penumbra_antumbra_Native_init(_env: JNIEnv, _class: JClass) {
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(log::LevelFilter::Debug)
             .with_tag("AntumbraNative"),
     );
-    log::info!("antumbra native library loaded");
+    log::info!("native ready");
 }
 
-/// Open a device that the Kotlin side has already claimed.
-/// Returns an opaque handle (jlong) or -1 on failure.
 #[no_mangle]
 pub extern "system" fn Java_com_penumbra_antumbra_Native_openDevice(
     mut env: JNIEnv,
     _class: JClass,
-    connection: JObject, // UsbDeviceConnection
-    ep_in: JObject,      // UsbEndpoint
-    ep_out: JObject,     // UsbEndpoint
+    connection: JObject,
+    ep_in: JObject,
+    ep_out: JObject,
     conn_type: jint,
+    vid: jint,
+    pid: jint,
 ) -> jlong {
     let ct = match conn_type {
         0 => ConnectionType::Brom,
-        1 => ConnectionType::Preloader,
         2 => ConnectionType::Da,
         _ => ConnectionType::Preloader,
     };
-
-    match AndroidUsbMTKPort::from_java(&mut env, connection, ep_in, ep_out, ct) {
-        Ok(port) => {
-            let h = insert_handle(port);
-            log::info!("opened Android USB port, handle={h}");
+    match AndroidUsbMTKPort::from_java(
+        &mut env,
+        connection,
+        ep_in,
+        ep_out,
+        ct,
+        vid as u16,
+        pid as u16,
+    ) {
+        Ok(p) => {
+            let h = insert(p);
+            log::info!("open handle={h} vid={vid:04x} pid={pid:04x}");
             h
         }
         Err(e) => {
-            log::error!("openDevice failed: {e}");
+            log::error!("open failed: {e}");
             -1
         }
     }
@@ -83,26 +81,54 @@ pub extern "system" fn Java_com_penumbra_antumbra_Native_closeDevice(
     _class: JClass,
     handle: jlong,
 ) {
-    let mut guards = HANDLES.lock().unwrap();
-    let idx = handle as usize;
-    if let Some(slot) = guards.get_mut(idx) {
-        *slot = None;
-        log::info!("closed handle {handle}");
+    let mut g = HANDLES.lock().unwrap();
+    if let Some(s) = g.get_mut(handle as usize) {
+        *s = None;
+        log::info!("closed {handle}");
     }
 }
 
-/// Simple smoke-test: write a few bytes and read response.
-/// Real flash / unlock APIs will be added once penumbra-mtk is wired.
 #[no_mangle]
-pub extern "system" fn Java_com_penumbra_antumbra_Native_smokeTest(
+pub extern "system" fn Java_com_penumbra_antumbra_Native_getPortName(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jstring {
+    let name = with(handle, |p| p.get_port_name()).unwrap_or_else(|| "".into());
+    env.new_string(name)
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_penumbra_antumbra_Native_getConnectionType(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    with(handle, |p| match p.connection_type() {
+        ConnectionType::Brom => 0,
+        ConnectionType::Preloader => 1,
+        ConnectionType::Da => 2,
+    })
+    .unwrap_or(-1)
+}
+
+/// Placeholder for real handshake once penumbra-mtk Device is wired.
+/// Returns 0 on success of a basic bulk round-trip probe.
+#[no_mangle]
+pub extern "system" fn Java_com_penumbra_antumbra_Native_probe(
     mut env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) -> jint {
-    with_handle(handle, |port| {
-        // placeholder — real handshake lives in penumbra-mtk Device
-        log::info!("smokeTest on handle {handle}, type={:?}", port.connection_type());
+    with(handle, |port| {
+        log::info!("probe {}", port.get_port_name());
+        // Real init() from DeviceBuilder goes here after submodule link.
         0
     })
     .unwrap_or(-1)
 }
+
+// Future: flashPartition, readbackPartition, unlock, relock, rpmbRead, rpmbWrite
+// will take file descriptors / byte arrays and drive penumbra_mtk::Device.

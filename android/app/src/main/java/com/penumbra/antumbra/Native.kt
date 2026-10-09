@@ -15,10 +15,16 @@ object Native {
         connection: UsbDeviceConnection,
         epIn: UsbEndpoint,
         epOut: UsbEndpoint,
-        connType: Int
+        connType: Int,
+        vid: Int,
+        pid: Int
     ): Long
 
     external fun closeDevice(handle: Long)
 
-    external fun smokeTest(handle: Long): Int
+    external fun getPortName(handle: Long): String?
+
+    external fun getConnectionType(handle: Long): Int
+
+    external fun probe(handle: Long): Int
 }
