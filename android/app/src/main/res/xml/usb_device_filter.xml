@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- MediaTek BROM / Preloader / DA (from penumbra KNOWN_PORTS) -->
+    <usb-device vendor-id="3725" product-id="3" />      <!-- 0x0E8D:0x0003 BROM -->
+    <usb-device vendor-id="3725" product-id="24576" />  <!-- 0x0E8D:0x6000 Preloader -->
+    <usb-device vendor-id="3725" product-id="8192" />   <!-- 0x0E8D:0x2000 Preloader -->
+    <usb-device vendor-id="3725" product-id="8193" />   <!-- 0x0E8D:0x2001 DA -->
+    <usb-device vendor-id="3725" product-id="8447" />   <!-- 0x0E8D:0x20FF Preloader -->
+    <usb-device vendor-id="3725" product-id="12288" />  <!-- 0x0E8D:0x3000 Preloader -->
+    <!-- LG -->
+    <usb-device vendor-id="4100" product-id="24576" />  <!-- 0x1004:0x6000 -->
+    <!-- OPPO -->
+    <usb-device vendor-id="8921" product-id="6" />      <!-- 0x22D9:0x0006 -->
+    <!-- Sony -->
+    <usb-device vendor-id="4046" product-id="61952" />  <!-- 0x0FCE:0xF200 -->
+    <usb-device vendor-id="4046" product-id="53737" />  <!-- 0x0FCE:0xD1E9 -->
+    <usb-device vendor-id="4046" product-id="53730" />  <!-- 0x0FCE:0xD1E2 -->
+    <usb-device vendor-id="4046" product-id="53740" />  <!-- 0x0FCE:0xD1EC -->
+    <usb-device vendor-id="4046" product-id="53725" />  <!-- 0x0FCE:0xD1DD -->
+</resources>
